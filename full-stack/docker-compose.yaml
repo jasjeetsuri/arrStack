@@ -1,0 +1,433 @@
+version: '3.8'
+services:
+  plex-recommendations:
+    image: plex-ai
+    container_name: plex-ai-recommendations
+    environment:
+      - PLEX_URL=${PLEX_URL}
+      - PLEX_TOKEN=${PLEX_SERVER_API_KEY}
+      - OPEN_AI_KEY=${OPEN_AI_KEY}
+      - LIBRARY_NAMES=${LIBRARY_NAMES}
+      - COLLECTION_TITLE=${COLLECTION_TITLE}
+      - HISTORY_AMOUNT=${HISTORY_AMOUNT}
+      - RECOMMENDED_AMOUNT=${RECOMMENDED_AMOUNT}
+      - MINIMUM_AMOUNT=${MINIMUM_AMOUNT}
+      - SECONDS_TO_WAIT=${SECONDS_TO_WAIT}
+      - ADD_TO_WATCHLIST=${ADD_TO_WATCHLIST}
+      - CREATE_COLLECTIONS=${CREATE_COLLECTIONS}
+    restart: unless-stopped
+    depends_on:
+      - plex
+    networks:
+      -  arr
+      
+  decluttarr:
+    image: ghcr.io/manimatter/decluttarr:latest
+    container_name: decluttarr
+    restart: always
+    environment:
+      - TZ=${TZ}
+      - PUID=${PUID}
+      - PGID=${PGID}
+
+      ## General
+      - TEST_RUN=${DECLUTTARR_TEST_RUN}
+      - SSL_VERIFICATION=${DECLUTTARR_SSL_VERIFICATION}
+      - LOG_LEVEL=${DECLUTTARR_LOG_LEVEL}
+
+      ## Features
+      - REMOVE_TIMER=${DECLUTTARR_REMOVE_TIMER}
+      - REMOVE_FAILED=${DECLUTTARR_REMOVE_FAILED}
+      - REMOVE_FAILED_IMPORTS=${DECLUTTARR_REMOVE_FAILED_IMPORTS}
+      - REMOVE_METADATA_MISSING=${DECLUTTARR_REMOVE_METADATA_MISSING}
+      - REMOVE_MISSING_FILES=${DECLUTTARR_REMOVE_MISSING_FILES}
+      - REMOVE_ORPHANS=${DECLUTTARR_REMOVE_ORPHANS}
+      - REMOVE_SLOW=${DECLUTTARR_REMOVE_SLOW}
+      - REMOVE_STALLED=${DECLUTTARR_REMOVE_STALLED}
+      - REMOVE_UNMONITORED=${DECLUTTARR_REMOVE_UNMONITORED}
+      - RUN_PERIODIC_RESCANS=${DECLUTTARR_RUN_PERIODIC_RESCANS}
+
+      # Feature Settings
+      - PERMITTED_ATTEMPTS=${DECLUTTARR_PERMITTED_ATTEMPTS}
+      - NO_STALLED_REMOVAL_QBIT_TAG=${DECLUTTARR_NO_STALLED_REMOVAL_QBIT_TAG}
+      - MIN_DOWNLOAD_SPEED=${DECLUTTARR_MIN_DOWNLOAD_SPEED}
+      - FAILED_IMPORT_MESSAGE_PATTERNS=${DECLUTTARR_FAILED_IMPORT_MESSAGE_PATTERNS}
+      
+      ## Radarr
+      - RADARR_URL=${RADARR_URL}
+      - RADARR_KEY=${RADARR_API_KEY}
+      ## Sonarr
+      - SONARR_URL=${SONARR_URL}
+      - SONARR_KEY=${SONARR_API_KEY}
+    depends_on:
+      - plex
+    networks:
+      -  arr
+
+  huntarr:
+    image: huntarr/huntarr:latest
+    container_name: huntarr
+    restart: always
+    ports:
+      - "${HUNTARR_PORT}:${HUNTARR_PORT}"
+    volumes:
+      - ${CONFIG_BASE}/huntarr:/config
+    environment:
+      - TZ=${TZ}
+    depends_on:
+      - plex
+    networks:
+      - arr
+      
+  kometa:
+    container_name: kometa
+    image: kometateam/kometa:latest
+    environment:
+      - KOMETA_RUN=${KOMETA_RUN}
+      - KOMETA_TIMES=${KOMETA_TIMES}
+    volumes:
+      - ${CONFIG_BASE}/kometa/config:/config
+    restart: no
+    depends_on:
+      - plex
+    networks:
+      - arr
+      
+
+  rescan:
+    image: rescan:latest
+    restart: unless-stopped 
+    container_name: rescan 
+    hostname: rescan 
+    volumes: 
+      - ${CONFIG_BASE}/rescan:/app/config
+      - /etc/localtime:/etc/localtime:ro
+      - ${MOUNT_PATH}:${MOUNT_PATH}:rslave
+    networks:
+      - arr
+    depends_on:
+      - plex
+
+  plextraktsync:
+    image: ghcr.io/taxel/plextraktsync
+    command: sync
+    container_name: plextraktsync
+    restart: on-failure:2
+    volumes:
+      - ${CONFIG_BASE}/plexsync:/app/config
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    env_file:
+      - stack.env
+    networks:
+      - arr
+    depends_on:
+      - plex
+      
+  autoscan:
+    container_name: autoscan
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+    ports:
+      - ${AUTOSCAN_PORT}/tcp
+    hostname: autoscan
+    image: saltydk/autoscan:latest
+    restart: unless-stopped
+    volumes:
+      - ${MOUNT_PATH}:${MOUNT_PATH}:rslave
+      - ${CONFIG_BASE}/autoscan:/config
+    networks:
+      - arr
+    depends_on:
+      - plex
+      
+  plex_authentication:
+    container_name: plex_authentication_service
+    image: ghcr.io/westsurname/scripts/plex_authentication:pr-55
+    pull_policy: always
+    volumes:
+      - ${CONFIG_BASE}/plex_auth/shared/tokens.json:/app/shared/tokens.json
+      - ${CONFIG_BASE}/plex_auth/sockets:/app/sockets
+    env_file:
+      - stack.env
+    restart: unless-stopped
+    networks:
+      - arr
+    depends_on:
+      - plex
+      
+  plex_request:
+    container_name: plex_request_service
+    image: ghcr.io/westsurname/scripts/plex_request:pr-55
+    pull_policy: always
+    volumes:
+      - ${CONFIG_BASE}/plex_auth/shared/tokens.json:/app/shared/tokens.json
+      - ${CONFIG_BASE}/plex_auth/sockets:/app/sockets
+    env_file:
+      - stack.env
+    restart: unless-stopped
+    networks:
+      - arr
+    depends_on:
+      - plex
+      
+  plex_request_nginx:
+    container_name: plex_request_nginx_service
+    image: ghcr.io/westsurname/scripts/plex_request_nginx:pr-55
+    pull_policy: always
+    volumes:
+      - ${PLEX_SERVER_PATH}:/plex:ro
+      - ${CONFIG_BASE}/plex_auth/sockets:/app/sockets
+    env_file:
+      - stack.env
+    ports:
+      - ${PLEX_REQUEST_NGINX_PORT}:8000
+    restart: unless-stopped
+    depends_on:
+      - plex_request
+      - plex_authentication
+      - plex
+    networks:
+      - arr
+      
+  plex:
+    container_name: plex
+    devices:
+      - /dev/dri:/dev/dri
+    environment:
+      - PLEX_UID=${PUID}
+      - PLEX_GID=${PGID}
+    env_file:
+      - stack.env
+    ports:
+      - ${PLEX_DLNA_PORT}:${PLEX_DLNA_PORT}/udp
+      - ${PLEX_EXTERNAL_PORT}:${PLEX_PORT}/tcp
+      - ${PLEX_GDM_PORT_1}:${PLEX_GDM_PORT_1}/udp
+      - ${PLEX_GDM_PORT_2}:${PLEX_GDM_PORT_2}/udp
+      - ${PLEX_GDM_PORT_3}:${PLEX_GDM_PORT_3}/udp
+      - ${PLEX_GDM_PORT_4}:${PLEX_GDM_PORT_4}/udp
+      - ${PLEX_DLNA_SERVER_PORT}:${PLEX_DLNA_SERVER_PORT}/tcp
+      - ${PLEX_COMPANION_PORT}:${PLEX_COMPANION_PORT}/tcp
+    hostname: plex
+    image: plexinc/pms-docker:latest
+    restart: unless-stopped
+    volumes:
+      - /dev/shm:/dev/shm
+      - ${TRANSCODES_PATH}:/transcode
+      - ${MOUNT_PATH}:${MOUNT_PATH}:rslave
+      - ${CONFIG_BASE}/plex/config:/config
+      - ${CONFIG_BASE}/plex/scripts:${SCRIPTS_PATH}
+    networks:
+      - arr
+
+  tautulli:
+    image: ghcr.io/tautulli/tautulli
+    container_name: tautulli
+    restart: unless-stopped
+    volumes:
+      - ${CONFIG_BASE}/tautulli/config:/config
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    ports:
+      - ${TAUTULLI_PORT}:${TAUTULLI_PORT}
+    networks:
+      - arr
+    depends_on:
+      - rclone
+      - sonarr
+      - radarr
+
+  overseerr:
+    image: sctx/overseerr:latest
+    container_name: overseerr
+    environment:
+      - LOG_LEVEL=debug
+      - TZ=${TZ}
+      - PORT=${OVERSEERR_PORT}
+    volumes:
+      - ${CONFIG_BASE}/overseerr/config:/app/config
+    restart: unless-stopped
+    networks:
+      - arr
+    depends_on:
+      - rclone
+      - sonarr
+      - radarr
+
+  prowlarr:
+    container_name: prowlarr
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+    image: ghcr.io/hotio/prowlarr:release
+    restart: unless-stopped
+    volumes:
+      - ${MOUNT_PATH}:${MOUNT_PATH}:rslave
+      - ${CONFIG_BASE}/prowlarr/Definitions/Custom:/Custom
+      - ${CONFIG_BASE}/prowlarr:/config
+    network_mode: "service:gluetun"
+    depends_on:
+      rclone:
+          condition: service_healthy
+      gluetun:
+          condition: service_healthy
+      
+  radarr:
+    container_name: radarr
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+    image: ghcr.io/hotio/radarr:release
+    restart: unless-stopped
+    volumes:
+      - ${MOUNT_PATH}:${MOUNT_PATH}:rslave
+      - ${CONFIG_BASE}/radarr:/config
+      - ${SCRIPTS_PATH}:/scripts
+      - /usr/bin/rclone:/usr/bin/rclone
+    network_mode: "service:gluetun"
+    depends_on:
+      rclone:
+          condition: service_healthy
+      gluetun:
+          condition: service_healthy
+      
+  sonarr:
+    container_name: sonarr
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+    image: ghcr.io/hotio/sonarr:release
+    restart: unless-stopped
+    volumes:
+      - ${MOUNT_PATH}:${MOUNT_PATH}:rslave
+      - ${SCRIPTS_PATH}:/scripts
+      - ${CONFIG_BASE}/sonarr:/config
+      - /usr/bin/rclone:/usr/bin/rclone
+    network_mode: "service:gluetun"
+    depends_on:
+      rclone:
+          condition: service_healthy
+      gluetun:
+          condition: service_healthy
+
+
+  decypharr:
+    image: cy01/blackhole:latest # or cy01/blackhole:beta
+    container_name: decypharr
+    user: "${PUID}:${PGID}"
+    volumes:
+      - ${MOUNT_PATH}/:${MOUNT_PATH}:rslave
+      - ${CONFIG_BASE}/decypharr/:/app # config.json must be in this directory
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - UMASK=002
+      - QBIT_PORT=${QBIT_PORT} # qBittorrent Port. This is optional. You can set this in the config file
+      - PORT=${PROXY_PORT} # Proxy Port. This is optional. You can set this in the config file
+    restart: unless-stopped
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    
+  rclone:
+    image: rclone/rclone:latest
+    container_name: rclone
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+      PUID: ${PUID}
+      PGID: ${PGID}
+    volumes:
+      - /mnt/remote/realdebrid:${RCLONE_MOUNT_PATH}:rshared
+      - ${CONFIG_BASE}/rclone/rclone.conf:/config/rclone/rclone.conf
+      - ${CONFIG_BASE}/rclone/entrypoint.sh:/entrypoint.sh
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
+    networks:
+      - arr
+    devices:
+      - /dev/fuse:/dev/fuse:rwm
+    init: true 
+    command: "mount ${RCLONE_REMOTE}: ${RCLONE_MOUNT_PATH} --allow-non-empty --allow-other --uid=${PUID} --gid=${PGID} --rc --rc-addr=0.0.0.0:${RCLONE_RC_PORT} --rc-user=${RCLONE_RC_USER} --rc-pass=${RCLONE_RC_PASS} \
+    --vfs-cache-mode=full --rc-web-gui \
+    --vfs-read-ahead=${RCLONE_CHUNK_SIZE} \
+    --vfs-read-chunk-size=${RCLONE_CHUNK_SIZE} \
+    --vfs-read-chunk-size-limit=1G \
+    --vfs-cache-max-size=10G \
+    --vfs-cache-max-age=12h \
+    --cache-dir=${RCLONE_CACHE_PATH} \
+    --buffer-size=16M \
+    --low-level-retries=20 \
+    --use-mmap \
+    --async-read=false \
+    --no-checksum \
+    --no-modtime \
+    --umask 002 --log-level INFO"
+    healthcheck:
+      test: ["CMD", "sh", "-c", "grep -q '/data' /proc/mounts"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+  
+  gluetun:
+    image: qmcgaw/gluetun
+    container_name: gluetun
+    # line above must be uncommented to allow external containers to connect.
+    # See https://github.com/qdm12/gluetun-wiki/blob/main/setup/connect-a-container-to-gluetun.md#external-container-to-gluetun
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    ports:
+      - 8888:8888/tcp # HTTP proxy
+      - 8388:8388/tcp # Shadowsocks
+      - 8388:8388/udp # Shadowsocks
+      - ${TWEAKIO_PORT}:${TWEAKIO_PORT}/tcp # tweakio
+      - ${QBIT_PORT}:${QBIT_PORT} # qBittorrent
+      - ${RADARR_PORT}:${RADARR_PORT} # radarr
+      - ${PROWLARR_PORT}:${PROWLARR_PORT} # prowlarr
+      - ${SONARR_PORT}:8988 # sonarr
+    volumes:
+      - ${CONFIG_BASE}/gluetun:/gluetun
+    environment:
+      # See https://github.com/qdm12/gluetun-wiki/tree/main/setup#setup
+      - VPN_SERVICE_PROVIDER=${VPN_SERVICE}
+      - VPN_TYPE=${VPN_TYPE}
+      # Wireguard:
+      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY}
+      #- WIREGUARD_ADDRESSES=194.35.232.13
+      # Timezone for accurate log times
+      - TZ=${TZ}
+      - SERVER_COUNTRIES=${VPN_COUNTRY}
+      - SERVER_CITIES=${VPN_CITY}
+      # Server list updater
+      # See https://github.com/qdm12/gluetun-wiki/blob/main/setup/servers.md#update-the-vpn-servers-list
+      - UPDATER_PERIOD=
+      - DNS_ADDRESS=127.0.0.11
+    networks:
+      - arr
+      
+  tweakio:
+    image: varthe/tweakio:latest
+    container_name: tweakio
+    volumes:
+      - ${CONFIG_BASE}/tweakio/config.yaml:/app/config.yaml
+    network_mode: "service:gluetun"
+    depends_on:
+      rclone:
+          condition: service_healthy
+      gluetun:
+          condition: service_healthy
+          
+networks:
+  arr:
+    external:
+      name: ${NETWORK_NAME}
